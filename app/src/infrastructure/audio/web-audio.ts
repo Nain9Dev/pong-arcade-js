@@ -400,14 +400,21 @@ const buildGraph = (ctx: AudioContext): AudioGraph => {
  * Degrades to a silent no-op when the platform has no `AudioContext` or when the
  * context cannot be constructed: audio is never worth failing a frame over.
  */
+import type { ComedyLayer } from './comedy-audio';
+import { createComedyLayer } from './comedy-audio';
+
 export const createWebAudio = (): AudioPort => {
   let graph: AudioGraph | null = null;
+  // The comedy layer shares this adapter's context and master bus, so muting and
+  // disposal stay in one place and the game never sees two audio systems.
+  let comedy: ComedyLayer | null = null;
   let muted = false;
   let intensity = 0;
   let disposed = false;
   let unavailable = false;
 
   const applyMaster = (): void => {
+    comedy?.setMuted(muted);
     if (!graph) return;
     // A fresh `setTargetAtTime` supersedes the pending one from its own start
     // time and inherits the current smoothed value, so cancelling first would
@@ -417,6 +424,7 @@ export const createWebAudio = (): AudioPort => {
   };
 
   const applyIntensity = (): void => {
+    comedy?.setCrowdIntensity(intensity);
     if (!graph) return;
     const now = graph.ctx.currentTime;
     // Curved so the bed stays out of the way during calm rallies and only opens
@@ -438,6 +446,7 @@ export const createWebAudio = (): AudioPort => {
       }
       try {
         graph = buildGraph(new Ctor());
+        comedy = createComedyLayer(graph.ctx, graph.master);
       } catch {
         unavailable = true;
         return;
@@ -490,13 +499,18 @@ export const createWebAudio = (): AudioPort => {
       source.disconnect();
     }
     active.sources.clear();
+    comedy?.dispose();
+    comedy = null;
     active.master.disconnect();
     if (active.ctx.state !== 'closed') void active.ctx.close().catch(() => undefined);
   };
 
   return {
     unlock,
-    handleEvents,
+    handleEvents(events) {
+      handleEvents(events);
+      comedy?.handleEvents(events);
+    },
     setIntensity,
     setMuted,
     get muted(): boolean {

@@ -6,7 +6,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
 import type { Arena, Side } from '../../domain/arena';
-import { goalPlaneZ, SIDES, sideSign } from '../../domain/arena';
+import { goalPlaneZ, paddlePlaneZ, SIDES, sideSign } from '../../domain/arena';
 import type { DomainEvent } from '../../domain/events';
 import type { MatchSnapshot } from '../../domain/match';
 import type { MatchRules } from '../../domain/rules';
@@ -27,6 +27,10 @@ import { createBandGlowTexture, createRadialGlowTexture } from './textures';
 import { BallTrail } from './trail';
 
 /** Everything that only exists between `mount()` and `dispose()`. */
+import type { Cast } from './cast';
+import { createCast } from './cast';
+import { FrameContextBuilder } from './frame-context';
+
 interface Stage {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -39,6 +43,8 @@ interface Stage {
   readonly trail: BallTrail;
   readonly particles: ParticleField;
   readonly overlay: ScreenOverlay;
+  readonly cast: Cast;
+  readonly context: FrameContextBuilder;
   readonly lights: THREE.Light[];
   readonly textures: THREE.Texture[];
   readonly passes: Pass[];
@@ -153,10 +159,11 @@ class ThreeRenderer implements RendererPort {
       near: new PaddleVisual('near', arena, rules, bandTexture),
       far: new PaddleVisual('far', arena, rules, bandTexture),
     };
-    for (const side of SIDES) scene.add(paddles[side].object);
+    // The paddles and the ball are drawn by the cast now: a racket held in a
+    // robot's hand, and a ball with a face. The primitive visuals stay alive
+    // because the trail and the impact tinting still read their state.
 
     const ball = new BallVisual(rules.ball.radius, haloTexture);
-    scene.add(ball.object);
 
     const trail = new BallTrail(MAX_TRAIL_SAMPLES, rules.ball.radius);
     scene.add(trail.object);
@@ -174,6 +181,11 @@ class ThreeRenderer implements RendererPort {
 
     const overlay = new ScreenOverlay(rig.camera);
 
+    const cast = createCast(arena, rules);
+    for (const root of cast.roots) scene.add(root);
+    const plane = paddlePlaneZ(arena);
+    const context = new FrameContextBuilder(arena, rules, { near: -plane, far: plane });
+
     this.stage = {
       renderer,
       scene,
@@ -186,6 +198,8 @@ class ThreeRenderer implements RendererPort {
       trail,
       particles,
       overlay,
+      cast,
+      context,
       lights,
       textures: [haloTexture, bandTexture],
       passes: [],
@@ -219,6 +233,7 @@ class ThreeRenderer implements RendererPort {
   }
 
   handleEvents(events: readonly DomainEvent[]): void {
+    this.stage?.cast.handleEvents(events);
     const stage = this.stage;
     if (stage === null) return;
 
@@ -373,6 +388,11 @@ class ThreeRenderer implements RendererPort {
       ballGlow: (0.25 + speed01 * 0.75) * visible,
     });
 
+    const ctx = stage.context.build(frame, this.motionScale < 1);
+    stage.cast.update(ctx);
+    // The effects module owns the trauma envelope; the rig owns the camera.
+    if (stage.cast.effects.shake > 0) stage.rig.shake(stage.cast.effects.shake);
+
     const focusPaddle = current.paddles[this.perspective];
     stage.rig.update(dt, {
       paddleX: focusPaddle.x,
@@ -413,11 +433,13 @@ class ThreeRenderer implements RendererPort {
     const profile = QUALITY_PROFILES[level];
     if (profile === this.profile) return;
     this.profile = profile;
+    this.stage?.cast.setQuality(level);
     this.applyQuality();
     this.resize(this.width, this.height, this.requestedPixelRatio);
   }
 
   dispose(): void {
+    this.stage?.cast.dispose();
     this.detachMotionQuery();
 
     const stage = this.stage;

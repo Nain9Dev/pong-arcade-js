@@ -1,0 +1,1004 @@
+/*
+ * Arcade-cabinet skin for the presentation shell.
+ *
+ * This sheet LAYERS on top of `styles.css`; it adds no markup and renames
+ * nothing. Everything here targets classes the shell already emits, so
+ * `dom-ui.ts` stays a pure rendering machine and the cabinet look can be dropped
+ * by removing one import.
+ *
+ * INTEGRATION (three things, all optional except the import)
+ * ----------------------------------------------------------------------------
+ * 1. Import it after the design system, in `main.ts`:
+ *
+ *        import './ui/styles.css';
+ *        import './ui/hud-3d.css';   // <- cabinet skin
+ *
+ *    Every rule below is also written with a `.ui` prefix, so it wins on
+ *    specificity even if the import order is ever reversed.
+ *
+ * 2. Feed the two gauges. CSS cannot read a number out of a text node, so the
+ *    rally meter and the speed gauge are driven by two registered custom
+ *    properties in `[0, 1]`, written on the `.ui` layer (or on `.hud`):
+ *
+ *        layer.style.setProperty('--rally-fill', String(Math.min(1, rally / 12)));
+ *        layer.style.setProperty('--speed-fill', String(speedRatio));
+ *
+ *    where `speedRatio` is `(ballSpeed - rules.ball.serveSpeed) /
+ *    (rules.ball.maxSpeed - rules.ball.serveSpeed)`, clamped. Both default to 0
+ *    and the gauges read as a legible empty meter until they are wired, so the
+ *    HUD never looks broken. `--rally-fill` carries a short transition because
+ *    the rally is an integer that changes on discrete events; `--speed-fill` has
+ *    none, because it is expected to be written every frame.
+ *
+ * 3. Optional one-shot flourishes. Add the class, remove it on `animationend`:
+ *
+ *        .score__side--bump   the score plate punches, for a point scored
+ *        .stat--flash         a stat plate flashes, for a new record
+ *
+ * PERFORMANCE
+ * ----------------------------------------------------------------------------
+ * The game must hold 60 fps on integrated graphics with a WebGL canvas under
+ * this layer, which rules out cheap-looking-but-expensive CSS:
+ *   - `backdrop-filter` is REMOVED from the small, always-on HUD pieces. A dozen
+ *     little frosted plates means a dozen backdrop passes over a live canvas;
+ *     opaque cabinet plastic reads better and costs nothing.
+ *   - the CRT layers are two static, composited quads behind the HUD text; the
+ *     only animation is a transform, which never repaints.
+ *   - no `filter` or `box-shadow` is animated anywhere; presses animate
+ *     `transform` and swap a pre-declared shadow.
+ *
+ * ACCESSIBILITY
+ * ----------------------------------------------------------------------------
+ *   - every decorative layer is `pointer-events: none`, so a pointer aimed at the
+ *     arena always reaches the canvas;
+ *   - `:focus-visible` rings are never touched: presses move `transform`, the
+ *     outline follows the element and no rule sets `outline: none`;
+ *   - the scanlines sit BEHIND the HUD (`z-index: -1` inside `.ui`), so they tint
+ *     the arena and never the text;
+ *   - `prefers-reduced-motion`, `prefers-contrast` and `forced-colors` each get a
+ *     block that strips the effect rather than weakening it.
+ */
+
+/* ------------------------------------------------------------------ Tokens -- */
+
+:root {
+  /* Cabinet plastic: a moulded plate, lit from above. */
+  --plate-top: #151b38;
+  --plate-face: #0a0f24;
+  --plate-ink: #05070f;
+  --plate-lit: rgb(255 255 255 / 0.14);
+  --plate-shade: rgb(0 0 0 / 0.72);
+  --plate-radius: clamp(0.45rem, 0.3rem + 0.5vw, 0.95rem);
+  /* Thickness of the hard bottom lip that makes a plate look moulded. */
+  --plate-lip: clamp(3px, 0.18vw, 6px);
+  --plate-pad: clamp(0.3rem, 0.2rem + 0.5vw, 0.62rem) clamp(0.5rem, 0.3rem + 0.9vw, 1.1rem);
+
+  /* Meters. */
+  --meter-track: #0a0d1c;
+  --meter-height: clamp(0.34rem, 0.24rem + 0.35vw, 0.6rem);
+  --meter-segment: clamp(0.4rem, 0.28rem + 0.4vw, 0.72rem);
+  --meter-notch: 0.13rem;
+  --c-warm: #fbbf24;
+
+  /* Buttons. */
+  --btn-lip: clamp(3px, 0.22vw, 7px);
+
+  /* CRT. Deliberately timid: the arena has to stay readable. */
+  --crt-line: rgb(0 0 0 / 0.17);
+  --crt-period: 3px;
+  --crt-vignette: rgb(2 3 9 / 0.55);
+  --crt-sweep: rgb(180 220 255 / 0.05);
+
+  --ease-arcade: cubic-bezier(0.2, 0.85, 0.3, 1.12);
+  --dur-press: 90ms;
+}
+
+/*
+ * Registering the gauge inputs does three things a plain custom property cannot:
+ * it guarantees the initial 0 (so an unwired HUD still renders), it type-checks
+ * the value, and it makes the derived `background-size` animatable.
+ */
+@property --rally-fill {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --speed-fill {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/* --------------------------------------------------------------- CRT glass -- */
+
+/*
+ * Both layers live inside `.ui`, which is a stacking context (`z-index: 1`), and
+ * sit at `z-index: -1`. That places them above the WebGL canvas — a sibling at
+ * `z-index: 0` outside this context — and below every HUD element, which is what
+ * keeps the text crisp while the arena gets the cabinet glass.
+ */
+.ui::before,
+.ui::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.ui::before {
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      var(--crt-line) 0 1px,
+      transparent 1px var(--crt-period)
+    ),
+    radial-gradient(125% 105% at 50% 48%, transparent 52%, var(--crt-vignette) 100%);
+  /* The bezel: a thin inner rim, as if the layer were glass in a frame. */
+  box-shadow:
+    inset 0 0 0 1px rgb(148 163 184 / 0.08),
+    inset 0 0 5rem rgb(2 3 9 / 0.55);
+}
+
+/* The slow phosphor sweep. Opt out with `layer.dataset.crt = 'off'`. */
+.ui:not([data-crt='off'])::after {
+  height: 26%;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--crt-sweep) 45%,
+    var(--crt-sweep) 55%,
+    transparent 100%
+  );
+  transform: translate3d(0, -110%, 0);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui:not([data-crt='off'])::after {
+    animation: cab-sweep 11s linear infinite;
+  }
+}
+
+/* Scanlines finer than the pixel grid turn into moiré; stretch them on hi-dpi. */
+@media (min-resolution: 2dppx) {
+  :root {
+    --crt-period: 4px;
+    --crt-line: rgb(0 0 0 / 0.13);
+  }
+}
+
+/* ----------------------------------------------------------- Score plates -- */
+
+.ui .score {
+  align-items: stretch;
+}
+
+.ui .score__side {
+  position: relative;
+  gap: clamp(0.15rem, 0.5vw, 0.4rem);
+  padding: clamp(0.4rem, 0.25rem + 0.6vw, 0.9rem) clamp(0.7rem, 0.4rem + 1.4vw, 1.6rem)
+    clamp(0.5rem, 0.3rem + 0.7vw, 1rem);
+  border-radius: var(--plate-radius);
+  background-color: var(--plate-face);
+  background-image:
+    /* Two cabinet screws, top corners. */
+    radial-gradient(
+      circle at 0.62rem 0.55rem,
+      rgb(255 255 255 / 0.22) 0 1px,
+      rgb(0 0 0 / 0.55) 1px 2.4px,
+      transparent 2.5px
+    ),
+    radial-gradient(
+      circle at calc(100% - 0.62rem) 0.55rem,
+      rgb(255 255 255 / 0.22) 0 1px,
+      rgb(0 0 0 / 0.55) 1px 2.4px,
+      transparent 2.5px
+    ),
+    linear-gradient(180deg, var(--plate-top) 0%, var(--plate-face) 62%);
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    inset 0 -1px 0 rgb(0 0 0 / 0.5),
+    0 var(--plate-lip) 0 -1px var(--plate-ink),
+    0 0.7rem 1.6rem rgb(0 0 0 / 0.5);
+}
+
+.ui .score__name {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.24em;
+  /* An engraved label: the shadow reads as a bevel, not as a glow. */
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.85);
+}
+
+/* The digits sit in a recessed window, like a real score display. */
+.ui .score__value {
+  min-width: 1.9ch;
+  padding: 0.08em 0.2em 0.04em;
+  border-radius: calc(var(--plate-radius) * 0.6);
+  background: var(--plate-ink);
+  box-shadow:
+    inset 0 2px 6px rgb(0 0 0 / 0.85),
+    inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  text-align: center;
+}
+
+.ui .score__sep {
+  align-self: center;
+  font-family: var(--font-num);
+  font-size: var(--fs-hud);
+  letter-spacing: 0.2em;
+  opacity: 0.5;
+}
+
+/* "Primero a 7" reads as a plaque screwed under the scoreboard. */
+.ui .score__target {
+  padding: 0.15rem clamp(0.5rem, 1.5vw, 0.9rem) 0.2rem;
+  border-radius: var(--r-full);
+  background: rgb(5 7 15 / 0.72);
+  box-shadow: inset 0 0 0 1px rgb(148 163 184 / 0.16);
+}
+
+.ui .score__side--bump {
+  animation: cab-bump 380ms var(--ease-arcade);
+}
+
+/* ------------------------------------------------------ Stat plates + gauges -- */
+
+.ui .hud__stats {
+  gap: var(--sp-2) clamp(var(--sp-2), 1.6vw, var(--sp-5));
+}
+
+.ui .stat {
+  position: relative;
+  gap: clamp(0.12rem, 0.4vw, 0.3rem);
+  padding: var(--plate-pad);
+  border-radius: var(--plate-radius);
+  background: linear-gradient(180deg, var(--plate-top) 0%, var(--plate-face) 70%);
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    0 var(--plate-lip) 0 -1px var(--plate-ink),
+    0 0.5rem 1.2rem rgb(0 0 0 / 0.45);
+}
+
+.ui .hud__stats > .stat {
+  /* Wide enough that a two-digit change never resizes the plate. */
+  min-width: clamp(5.2rem, 3.5rem + 9vw, 9.5rem);
+}
+
+.ui .stat__key {
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.8);
+}
+
+.ui .stat__value {
+  text-shadow: 0 0 0.8rem rgb(148 163 184 / 0.35);
+}
+
+/*
+ * The meters.
+ *
+ * The shell exposes no per-stat hook, so the two gauges are addressed by their
+ * position inside `.hud__stats` (rally, speed, fps — the order `dom-ui.ts`
+ * builds them in). The `.stat--rally` / `.stat--speed` aliases are there so the
+ * skin keeps working the day someone adds explicit classes.
+ *
+ * Each meter is ONE pseudo-element with three background layers, bottom to top:
+ * the lit fill (a solid colour sized to the value), the segment notches carved
+ * over it, and — on the speed gauge only — a needle at the fill position.
+ */
+.ui .hud__stats > .stat:nth-child(1)::after,
+.ui .hud__stats > .stat:nth-child(2)::after,
+.ui .stat--rally::after,
+.ui .stat--speed::after {
+  content: '';
+  width: 100%;
+  height: var(--meter-height);
+  margin-top: 0.15rem;
+  border-radius: var(--r-full);
+  background-color: var(--meter-track);
+  background-repeat: repeat-x, no-repeat;
+  background-position: left center, left center;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.6),
+    inset 0 1px 2px rgb(0 0 0 / 0.7);
+  pointer-events: none;
+}
+
+/* Rally: cyan -> violet -> rose as the exchange gets out of hand. */
+.ui .hud__stats > .stat:nth-child(1)::after,
+.ui .stat--rally::after {
+  --meter-heat: var(--c-near);
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 var(--meter-segment),
+      var(--plate-ink) var(--meter-segment) calc(var(--meter-segment) + var(--meter-notch))
+    ),
+    linear-gradient(var(--meter-heat), var(--meter-heat));
+  background-size:
+    auto auto,
+    calc(clamp(0, var(--rally-fill, 0), 1) * 100%) 100%;
+  /* The rally is an integer arriving on discrete events, so it can be eased. */
+  transition: --rally-fill 220ms var(--ease-out);
+}
+
+/* Speed: cool -> amber -> rose, with a bright needle riding the front. */
+.ui .hud__stats > .stat:nth-child(2)::after,
+.ui .stat--speed::after {
+  --meter-heat: var(--c-near);
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.9)),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 var(--meter-segment),
+      var(--plate-ink) var(--meter-segment) calc(var(--meter-segment) + var(--meter-notch))
+    ),
+    linear-gradient(var(--meter-heat), var(--meter-heat));
+  background-repeat: no-repeat, repeat-x, no-repeat;
+  background-size:
+    2px 100%,
+    auto auto,
+    calc(clamp(0, var(--speed-fill, 0), 1) * 100%) 100%;
+  background-position:
+    calc(clamp(0, var(--speed-fill, 0), 1) * (100% - 2px)) center,
+    left center,
+    left center;
+  /* No transition: `--speed-fill` is expected to be written every frame. */
+}
+
+/*
+ * Colour by value. `color-mix()` is the only way to interpolate a colour from a
+ * number in plain CSS, so it is applied behind a support query: without it the
+ * meters simply stay cyan instead of disappearing.
+ */
+@supports (color: color-mix(in oklab, red, blue)) {
+  .ui .hud__stats > .stat:nth-child(1)::after,
+  .ui .stat--rally::after {
+    --meter-heat: color-mix(
+      in oklab,
+      color-mix(in oklab, var(--c-near), var(--c-accent) calc(min(var(--rally-fill, 0), 0.5) * 200%)),
+      var(--c-far) calc(max(var(--rally-fill, 0) - 0.5, 0) * 200%)
+    );
+  }
+
+  .ui .hud__stats > .stat:nth-child(2)::after,
+  .ui .stat--speed::after {
+    --meter-heat: color-mix(
+      in oklab,
+      color-mix(in oklab, var(--c-near), var(--c-warm) calc(min(var(--speed-fill, 0), 0.5) * 200%)),
+      var(--c-far) calc(max(var(--speed-fill, 0) - 0.5, 0) * 200%)
+    );
+  }
+}
+
+/* The plate itself warms up with the rally: peripheral vision reads it. */
+.ui .hud__stats > .stat:nth-child(1),
+.ui .stat--rally {
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    inset 0 0 0 1px rgb(148 163 184 / 0.08),
+    0 var(--plate-lip) 0 -1px var(--plate-ink),
+    0 0.5rem 1.2rem rgb(0 0 0 / 0.45);
+}
+
+.ui .stat--flash {
+  animation: cab-flash 520ms var(--ease-out);
+}
+
+/* The FPS plate is instrumentation, not scoreboard: keep it quiet. */
+.ui .hud__stats > .stat:nth-child(3) {
+  opacity: 0.72;
+}
+
+.ui .hud__stats > .stat:nth-child(3) .stat__value {
+  font-size: var(--fs-hud);
+}
+
+/* ------------------------------------------------------------- HUD toggles -- */
+
+.ui .chip {
+  align-items: center;
+  padding: clamp(0.28rem, 0.5vw, 0.5rem) clamp(0.6rem, 1.2vw, 1rem);
+  border-color: rgb(148 163 184 / 0.24);
+  border-radius: var(--r-full);
+  /* Opaque plastic instead of frosted glass: one less backdrop pass per chip. */
+  background: linear-gradient(180deg, var(--plate-top), var(--plate-face));
+  backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    0 calc(var(--plate-lip) - 1px) 0 -1px var(--plate-ink),
+    0 0.4rem 0.9rem rgb(0 0 0 / 0.42);
+  transition:
+    transform var(--dur-press) var(--ease-arcade),
+    box-shadow var(--dur-press) var(--ease-arcade),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.ui .chip:hover {
+  background: linear-gradient(180deg, #1b2246, var(--plate-face));
+  border-color: rgb(148 163 184 / 0.45);
+}
+
+.ui .chip:active {
+  transform: translateY(calc(var(--plate-lip) - 1px));
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 0.6),
+    0 0 0 0 var(--plate-ink);
+}
+
+/* A lit pilot dot, so audio-on / audio-off is visible without reading. */
+.ui .chip .chip__value::before {
+  content: '';
+  display: inline-block;
+  width: 0.42em;
+  height: 0.42em;
+  margin-right: 0.45em;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0.4rem currentColor;
+  vertical-align: baseline;
+}
+
+.ui .chip[aria-pressed='true'] {
+  border-color: rgb(244 63 94 / 0.5);
+}
+
+/* ---------------------------------------------------------- Serve countdown -- */
+
+.ui .serve {
+  padding: clamp(0.8rem, 2vw, 1.5rem) clamp(1.4rem, 4vw, 2.8rem);
+  border-radius: var(--plate-radius);
+  background: linear-gradient(180deg, rgb(21 27 56 / 0.92), rgb(5 7 15 / 0.92));
+  backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    inset 0 0 0 1px rgb(168 85 247 / 0.25),
+    0 1rem 2.5rem rgb(0 0 0 / 0.55);
+}
+
+.ui .serve__label {
+  letter-spacing: 0.34em;
+}
+
+.ui .serve__count {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui .serve__count {
+    /* One tick per second, matching the countdown the domain is emitting. */
+    animation: cab-tick 1s steps(1, end) infinite;
+  }
+}
+
+/* ---------------------------------------------------------------- Marquee -- */
+
+.ui .menu__head {
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+ * The bloom behind the logo: a cheap radial, not a text-shadow animation.
+ *
+ * The horizontal insets stay at 0 on purpose. The panel is a scroll container,
+ * so anything bleeding past its right content edge lands in the scrollable
+ * overflow area and raises a horizontal scrollbar over the whole menu.
+ */
+.ui .menu__head::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -18% 0 30%;
+  background: radial-gradient(
+    60% 100% at 22% 50%,
+    rgb(34 211 238 / 0.22) 0%,
+    rgb(168 85 247 / 0.12) 45%,
+    transparent 72%
+  );
+  pointer-events: none;
+}
+
+.ui .menu__title {
+  /* Chromatic fringe: the badly converged tube of every cabinet ever built. */
+  text-shadow:
+    0.035em 0 0 rgb(244 63 94 / 0.4),
+    -0.035em 0 0 rgb(34 211 238 / 0.4),
+    0 0 1.6rem rgb(34 211 238 / 0.45);
+}
+
+.ui .menu__title-accent {
+  /* The "3D" reads as a badge riveted onto the marquee. */
+  display: inline-block;
+  padding: 0 0.12em;
+  border-radius: 0.12em;
+  background: linear-gradient(180deg, rgb(244 63 94 / 0.16), transparent);
+  box-shadow: inset 0 0 0 max(2px, 0.03em) rgb(244 63 94 / 0.45);
+  text-shadow: 0 0 1.4rem rgb(244 63 94 / 0.55);
+}
+
+.ui .menu__tagline {
+  text-wrap: pretty;
+}
+
+.ui .menu__label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* A rule that runs out from every section label, like a cabinet silkscreen. */
+.ui .menu__label::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(148 163 184 / 0.32), transparent);
+}
+
+/* ---------------------------------------------------------------- Buttons -- */
+
+.ui .button {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--plate-radius);
+  background: linear-gradient(180deg, var(--plate-top), var(--plate-face));
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    0 var(--btn-lip) 0 0 var(--plate-ink),
+    0 calc(var(--btn-lip) + 0.4rem) 1rem rgb(0 0 0 / 0.45);
+  transition:
+    transform var(--dur-press) var(--ease-arcade),
+    box-shadow var(--dur-press) var(--ease-arcade),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.ui .button:hover {
+  transform: translateY(calc(var(--btn-lip) * -0.3));
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    0 calc(var(--btn-lip) * 1.3) 0 0 var(--plate-ink),
+    0 calc(var(--btn-lip) + 0.7rem) 1.4rem rgb(0 0 0 / 0.5);
+}
+
+/* The press: the key travels its full lip and the shadow collapses under it. */
+.ui .button:active {
+  transform: translateY(var(--btn-lip));
+  box-shadow:
+    inset 0 2px 6px rgb(0 0 0 / 0.5),
+    0 0 0 0 var(--plate-ink),
+    0 0.15rem 0.3rem rgb(0 0 0 / 0.4);
+}
+
+.ui .button--primary {
+  color: #04050c;
+  border-color: transparent;
+  background: linear-gradient(180deg, #67e8f9 0%, var(--c-near) 45%, #0e9bb5 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.5),
+    0 var(--btn-lip) 0 0 #0a5b6b,
+    0 calc(var(--btn-lip) + 0.5rem) 1.6rem rgb(34 211 238 / 0.35);
+}
+
+.ui .button--primary:hover {
+  background: linear-gradient(180deg, #a5f3fc 0%, #3ddef2 45%, #0e9bb5 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.55),
+    0 calc(var(--btn-lip) * 1.3) 0 0 #0a5b6b,
+    0 calc(var(--btn-lip) + 0.8rem) 2rem rgb(34 211 238 / 0.45);
+}
+
+.ui .button--primary:active {
+  box-shadow:
+    inset 0 2px 7px rgb(0 0 0 / 0.35),
+    0 0 0 0 #0a5b6b,
+    0 0.15rem 0.3rem rgb(0 0 0 / 0.35);
+}
+
+/* A shine that crosses the primary button, only while it is hovered. */
+.ui .button--primary::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(105deg, transparent, rgb(255 255 255 / 0.55), transparent);
+  transform: translateX(-160%);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui .button--primary:hover::after,
+  .ui .button--primary:focus-visible::after {
+    animation: cab-shine 900ms var(--ease-out);
+  }
+}
+
+.ui .button--ghost {
+  background: rgb(5 7 15 / 0.55);
+  box-shadow:
+    inset 0 0 0 1px rgb(148 163 184 / 0.2),
+    0 calc(var(--btn-lip) - 2px) 0 0 rgb(5 7 15 / 0.9);
+}
+
+.ui .button--ghost:hover {
+  background: rgb(11 16 34 / 0.85);
+}
+
+/* ------------------------------------------------------------ Option cards -- */
+
+.ui .option {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(0.6rem, 0.4rem + 0.8vw, 1rem) clamp(0.7rem, 0.5rem + 1vw, 1.2rem);
+  padding-right: clamp(1.6rem, 1.2rem + 1vw, 2.2rem);
+  border-radius: var(--plate-radius);
+  background: linear-gradient(180deg, rgb(21 27 56 / 0.5), rgb(10 15 36 / 0.5));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 calc(var(--btn-lip) - 2px) 0 -1px var(--plate-ink),
+    0 0.4rem 0.9rem rgb(0 0 0 / 0.35);
+  transition:
+    transform var(--dur-press) var(--ease-arcade),
+    box-shadow var(--dur-press) var(--ease-arcade),
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+/* The selector lamp: dark until this option is the chosen one. */
+.ui .option::before {
+  content: '';
+  position: absolute;
+  top: clamp(0.6rem, 1.2vw, 0.95rem);
+  right: clamp(0.6rem, 1.2vw, 0.95rem);
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: rgb(148 163 184 / 0.2);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.8);
+  transition: background-color var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+.ui .option:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ui .option:active:not(:disabled) {
+  transform: translateY(calc(var(--btn-lip) - 2px));
+  box-shadow:
+    inset 0 2px 5px rgb(0 0 0 / 0.5),
+    0 0 0 0 var(--plate-ink);
+}
+
+.ui .option[aria-pressed='true'] {
+  border-color: var(--c-near);
+  background: linear-gradient(180deg, rgb(34 211 238 / 0.2), rgb(34 211 238 / 0.06));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.15),
+    0 calc(var(--btn-lip) - 2px) 0 -1px #06414f,
+    0 0 1.6rem rgb(34 211 238 / 0.35);
+}
+
+.ui .option[aria-pressed='true']::before {
+  background: var(--c-near);
+  box-shadow:
+    0 0 0.5rem var(--c-near),
+    inset 0 0 0 1px rgb(255 255 255 / 0.5);
+}
+
+.ui .option:disabled {
+  filter: saturate(0.35);
+}
+
+.ui .option__hint {
+  text-wrap: pretty;
+}
+
+/* --------------------------------------------------------------- Keycaps -- */
+
+.ui .legend__keys {
+  padding: 0.2rem 0.45rem 0.28rem;
+  border-color: rgb(148 163 184 / 0.28);
+  border-radius: 0.35rem;
+  background: linear-gradient(180deg, #232a4d 0%, #131934 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    0 2px 0 0 #05070f,
+    0 3px 4px rgb(0 0 0 / 0.4);
+  color: var(--c-text);
+  letter-spacing: 0.06em;
+}
+
+.ui .legend__row {
+  align-items: center;
+}
+
+/* ------------------------------------------------------------- Overlays -- */
+
+.ui .overlay {
+  /*
+   * One full-screen blur is affordable; a dozen small ones are not. The tint is
+   * raised so the panel stays readable even at this lower blur radius.
+   */
+  backdrop-filter: blur(9px);
+  background:
+    radial-gradient(95% 70% at 50% 0%, rgb(13 16 48 / 0.8) 0%, transparent 70%),
+    rgb(2 3 9 / 0.84);
+}
+
+/*
+ * A whisper of scanline on the panel too, so the menu belongs to the cabinet.
+ *
+ * It is a background layer rather than a pseudo-element because the panel
+ * scrolls: an absolutely positioned overlay would be anchored to the scrollable
+ * area and slide away with the content, while a background stays pinned to the
+ * border box — which is how a screen actually behaves.
+ */
+.ui .overlay__panel {
+  border-color: rgb(148 163 184 / 0.24);
+  background-image:
+    repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.1) 0 1px, transparent 1px var(--crt-period)),
+    linear-gradient(180deg, rgb(13 18 40 / 0.9), rgb(6 9 21 / 0.92));
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    0 1.5rem 4.5rem rgb(0 0 0 / 0.7),
+    0 0 0 1px rgb(0 0 0 / 0.6);
+}
+
+.ui .overlay--near .overlay__panel {
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    inset 0 0 0 1px rgb(34 211 238 / 0.28),
+    0 1.5rem 4.5rem rgb(0 0 0 / 0.7);
+}
+
+.ui .overlay--far .overlay__panel {
+  box-shadow:
+    inset 0 1px 0 var(--plate-lit),
+    inset 0 0 0 1px rgb(244 63 94 / 0.28),
+    0 1.5rem 4.5rem rgb(0 0 0 / 0.7);
+}
+
+.ui .overlay__stats .stat {
+  min-width: clamp(7rem, 5rem + 10vw, 12rem);
+  align-items: center;
+}
+
+/* --------------------------------------------------------------- Motion -- */
+
+@keyframes cab-sweep {
+  from {
+    transform: translate3d(0, -110%, 0);
+  }
+  to {
+    transform: translate3d(0, 420%, 0);
+  }
+}
+
+@keyframes cab-shine {
+  from {
+    transform: translateX(-160%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
+/* Squash and stretch: the plate takes the hit, then settles. */
+@keyframes cab-bump {
+  0% {
+    transform: scale(1);
+  }
+  28% {
+    transform: scale(1.14, 0.9);
+  }
+  62% {
+    transform: scale(0.97, 1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes cab-flash {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgb(168 85 247 / 0.3);
+  }
+}
+
+@keyframes cab-tick {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.72;
+  }
+}
+
+/* ----------------------------------------------------------- Adaptations -- */
+
+/* Small phones: the cabinet gets thinner mouldings so the HUD still fits. */
+@media (max-width: 26rem) {
+  :root {
+    --plate-lip: 3px;
+    --btn-lip: 3px;
+    --meter-height: 0.32rem;
+    --meter-segment: 0.38rem;
+  }
+
+  .ui .hud__stats > .stat {
+    flex: 1 1 5.5rem;
+    min-width: 0;
+  }
+
+  .ui .score__side {
+    padding-inline: 0.55rem;
+  }
+
+  /* Screws at this size are noise, not charm. */
+  .ui .score__side {
+    background-image: linear-gradient(180deg, var(--plate-top) 0%, var(--plate-face) 62%);
+  }
+}
+
+/* Very wide displays: thicker plastic, so the cabinet does not look printed. */
+@media (min-width: 120rem) {
+  :root {
+    --plate-lip: 7px;
+    --btn-lip: 8px;
+    --meter-height: 0.7rem;
+    --meter-segment: 0.85rem;
+    --crt-period: 5px;
+  }
+}
+
+/* Wide but short (a laptop in landscape): keep the marquee bloom off the copy. */
+@media (max-height: 34rem) and (min-width: 48rem) {
+  .ui .menu__head::before {
+    inset: -10% -6% 45%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * `styles.css` already disables animation inside `.ui`; this covers the
+   * registered-property transition, which is not a `.ui *` descendant rule, and
+   * removes the sweep layer outright rather than freezing it mid-screen.
+   */
+  .ui .hud__stats > .stat::after,
+  .ui .stat--rally::after,
+  .ui .stat--speed::after {
+    transition: none;
+  }
+
+  .ui::after {
+    display: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --plate-top: #0a1020;
+    --plate-face: #05070f;
+    --plate-lit: rgb(255 255 255 / 0.3);
+    --meter-track: #000000;
+    --crt-line: transparent;
+    --crt-vignette: transparent;
+    --crt-sweep: transparent;
+  }
+
+  /* No glass, no glow: every plate becomes a flat, high-contrast panel. */
+  .ui::before,
+  .ui::after,
+  .ui .menu__head::before,
+  .ui .button--primary::after {
+    display: none;
+  }
+
+  .ui .score__side,
+  .ui .stat,
+  .ui .chip,
+  .ui .option,
+  .ui .button,
+  .ui .legend__keys,
+  .ui .serve {
+    border: 2px solid var(--c-line-strong);
+    background: var(--plate-face);
+    box-shadow: none;
+  }
+
+  .ui .overlay__panel {
+    background-image: none;
+    background-color: var(--plate-face);
+  }
+
+  .ui .menu__title,
+  .ui .score__name,
+  .ui .stat__key,
+  .ui .score__value {
+    text-shadow: none;
+  }
+
+  .ui .menu__title-accent {
+    background: none;
+  }
+
+  .ui .hud__stats > .stat:nth-child(1)::after,
+  .ui .hud__stats > .stat:nth-child(2)::after,
+  .ui .stat--rally::after,
+  .ui .stat--speed::after {
+    height: 0.5rem;
+    box-shadow: inset 0 0 0 2px var(--c-line-strong);
+  }
+
+  .ui .option[aria-pressed='true'] {
+    border-color: var(--c-near);
+    background: #0b2b33;
+  }
+
+  .ui .hud__stats > .stat:nth-child(3) {
+    opacity: 1;
+  }
+}
+
+/*
+ * Windows high-contrast mode replaces every colour with a system one, which
+ * would leave the meters invisible: the fill is opted out of the substitution so
+ * it keeps reading as a gauge, and the purely decorative layers are dropped.
+ */
+@media (forced-colors: active) {
+  .ui::before,
+  .ui::after,
+  .ui .menu__head::before,
+  .ui .button--primary::after,
+  .ui .option::before {
+    display: none;
+  }
+
+  .ui .score__side,
+  .ui .stat,
+  .ui .chip,
+  .ui .option,
+  .ui .button,
+  .ui .legend__keys,
+  .ui .serve,
+  .ui .overlay__panel {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .ui .hud__stats > .stat:nth-child(1)::after,
+  .ui .hud__stats > .stat:nth-child(2)::after,
+  .ui .stat--rally::after,
+  .ui .stat--speed::after {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+    background-color: Canvas;
+    background-image: linear-gradient(Highlight, Highlight);
+    background-repeat: no-repeat;
+    box-shadow: none;
+  }
+
+  .ui .hud__stats > .stat:nth-child(1)::after,
+  .ui .stat--rally::after {
+    background-size: calc(clamp(0, var(--rally-fill, 0), 1) * 100%) 100%;
+  }
+
+  .ui .hud__stats > .stat:nth-child(2)::after,
+  .ui .stat--speed::after {
+    background-size: calc(clamp(0, var(--speed-fill, 0), 1) * 100%) 100%;
+    background-position: left center;
+  }
+
+  .ui .option[aria-pressed='true'] {
+    border: 2px solid Highlight;
+  }
+}

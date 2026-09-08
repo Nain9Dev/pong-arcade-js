@@ -15,7 +15,10 @@ import { createBrowserInput } from './infrastructure/input/browser-input';
 import { createThreeRenderer } from './infrastructure/render/three-renderer';
 import { createLocalStorage } from './infrastructure/storage/local-storage';
 import { createDomUi } from './ui/dom-ui';
+import { createCommentary } from './ui/personality';
 import './ui/styles.css';
+import './ui/hud-3d.css';
+import './ui/personality.css';
 
 /**
  * Composition root.
@@ -58,6 +61,7 @@ const bootstrap = (): void => {
   const input = createBrowserInput({ target: root });
   const clock = createRafClock();
   const ui = createDomUi(root);
+  const commentary = createCommentary(root);
 
   renderer.mount(root, session.arena, session.rules);
   renderer.setCameraMode(prefs.cameraMode);
@@ -113,6 +117,7 @@ const bootstrap = (): void => {
         session.restart();
         break;
       case 'quit-to-menu':
+        commentary.clear();
         session.quitToMenu();
         storage.write<SessionStats>(STATS_KEY, session.currentStats);
         break;
@@ -182,6 +187,16 @@ const bootstrap = (): void => {
     if (events.length === 0) return;
     renderer.handleEvents(events);
     audio.handleEvents(events);
+    const snapshot = session.snapshot();
+    commentary.handleEvents(events, {
+      rally: snapshot.rally,
+      score: snapshot.score,
+      speedRatio: Math.min(1, snapshot.ballSpeed / session.rules.ball.maxSpeed),
+      difficulty: session.difficulty,
+      mode: session.mode,
+      playerLabels: session.labels,
+      pointsToWin: session.rules.pointsToWin,
+    });
     for (const event of events) {
       if (event.type === 'match-won') {
         storage.write<SessionStats>(STATS_KEY, session.currentStats);

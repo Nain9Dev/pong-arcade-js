@@ -1,0 +1,553 @@
+/*
+ * Comic layer: commentary bubbles, opponent taunts, rally hype and medals.
+ *
+ * It sits on top of the arena and under nothing: it is decoration, so it never
+ * takes a pointer event and never blocks the HUD. Colours come from the design
+ * system in `styles.css`; every `var()` carries a fallback so the layer still
+ * looks right if it is ever loaded on its own.
+ *
+ * Animation note: entry and exit each exist twice (`-a` / `-b`) with identical
+ * keyframes. Alternating between the two variants restarts an animation without
+ * the usual "remove class, force a reflow, add class" trick, which would cost a
+ * synchronous layout in the middle of a frame.
+ */
+
+.pers {
+  --pers-skin: #080b1a;
+  --pers-ink: var(--c-text, #e9eefb);
+  --pers-dim: var(--c-text-dim, #97a5c2);
+  --pers-near: var(--c-near, #22d3ee);
+  --pers-far: var(--c-far, #f43f5e);
+  --pers-accent: var(--c-accent, #a855f7);
+  --pers-edge: rgb(233 238 251 / 0.22);
+  --pers-halo: rgb(34 211 238 / 0.18);
+  --pers-hot: var(--pers-near);
+  --pers-tilt: 0deg;
+  --pers-round: 1.4rem;
+  --pers-ink-shadow: 0 1px 0 rgb(0 0 0 / 0.6);
+
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* Pure decoration: the arena and the HUD must keep every click. */
+  pointer-events: none;
+  font-family: var(--font-ui, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  contain: layout style;
+}
+
+/* Every slot here sets its own `display`, which would otherwise win over the
+   user-agent rule for `[hidden]` and leave a dismissed bubble on screen. */
+.pers [hidden] {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------- Bubbles -- */
+
+.pers__slot {
+  position: absolute;
+  display: flex;
+  transform: rotate(var(--pers-tilt));
+  will-change: transform, opacity;
+}
+
+.pers__bubble {
+  position: relative;
+  padding: var(--sp-3, 0.75rem) var(--sp-4, 1rem);
+  max-width: 100%;
+  border: 2px solid var(--pers-edge);
+  border-radius: var(--pers-round);
+  background: var(--pers-skin);
+  color: var(--pers-ink);
+  box-shadow:
+    0 0.9rem 2.4rem rgb(0 0 0 / 0.55),
+    0 0 1.8rem var(--pers-halo),
+    inset 0 1px 0 rgb(255 255 255 / 0.09);
+}
+
+/* The tail is a rotated square wearing two of the bubble's own borders. */
+.pers__bubble::after {
+  content: "";
+  position: absolute;
+  width: 1.05rem;
+  height: 1.05rem;
+  background: var(--pers-skin);
+  border-bottom-right-radius: 0.2rem;
+  transform: rotate(45deg);
+}
+
+.pers__line {
+  margin: 0;
+  font-size: clamp(0.9rem, 0.8rem + 0.45vw, 1.15rem);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.005em;
+  text-wrap: balance;
+  text-shadow: var(--pers-ink-shadow);
+}
+
+/* -- Announcer, bottom centre -- */
+
+.pers__stack {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(3.25rem, 9vh, 6rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3, 0.75rem);
+  width: min(42rem, 90vw);
+  transform: translateX(-50%);
+}
+
+.pers__slot--say {
+  --pers-tilt: -1.1deg;
+  --pers-halo: rgb(168 85 247 / 0.22);
+
+  position: static;
+  justify-content: center;
+  max-width: 100%;
+}
+
+.pers__slot--say .pers__bubble {
+  border-bottom-left-radius: 0.5rem;
+}
+
+.pers__slot--say .pers__bubble::after {
+  left: 1.9rem;
+  bottom: -0.6rem;
+  border-right: 2px solid var(--pers-edge);
+  border-bottom: 2px solid var(--pers-edge);
+}
+
+/* -- Opponent, anchored to the far end of the arena -- */
+
+.pers__slot--taunt {
+  --pers-tilt: 1.6deg;
+  --pers-halo: rgb(244 63 94 / 0.24);
+
+  top: clamp(5.5rem, 16vh, 11rem);
+  left: max(var(--sp-4, 1rem), env(safe-area-inset-left));
+  max-width: min(21rem, 46vw);
+  flex-direction: column;
+}
+
+.pers__slot--taunt .pers__bubble {
+  border-color: rgb(244 63 94 / 0.45);
+  border-top-right-radius: 0.5rem;
+}
+
+.pers__slot--taunt .pers__bubble::after {
+  right: 1.6rem;
+  top: -0.6rem;
+  border-top: 2px solid rgb(244 63 94 / 0.45);
+  border-right: 2px solid rgb(244 63 94 / 0.45);
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0.2rem;
+}
+
+.pers__who {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-size: var(--fs-micro, 0.68rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pers-far);
+}
+
+/* The opponent's colour follows its difficulty: the rookie is friendlier. */
+.pers__bubble--taunt[data-mood="rookie"] {
+  border-color: rgb(34 211 238 / 0.4);
+  --pers-halo: rgb(34 211 238 / 0.2);
+}
+
+.pers__bubble--taunt[data-mood="rookie"]::after {
+  border-top-color: rgb(34 211 238 / 0.4);
+  border-right-color: rgb(34 211 238 / 0.4);
+}
+
+.pers__bubble--taunt[data-mood="rookie"] .pers__who {
+  color: var(--pers-near);
+}
+
+.pers__bubble--taunt[data-mood="singularity"] {
+  border-color: rgb(168 85 247 / 0.55);
+  --pers-halo: rgb(168 85 247 / 0.3);
+}
+
+.pers__bubble--taunt[data-mood="singularity"]::after {
+  border-top-color: rgb(168 85 247 / 0.55);
+  border-right-color: rgb(168 85 247 / 0.55);
+}
+
+.pers__bubble--taunt[data-mood="singularity"] .pers__who {
+  color: var(--pers-accent);
+}
+
+/* ---------------------------------------------------------- Rally hype -- */
+
+.pers__hype {
+  position: absolute;
+  top: clamp(6rem, 17vh, 12rem);
+  right: max(var(--sp-4, 1rem), env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  transform-origin: 100% 50%;
+  will-change: transform;
+}
+
+.pers__hype-count {
+  font-family: var(--font-num, ui-monospace, Menlo, Consolas, monospace);
+  font-size: clamp(2.1rem, 1rem + 4.2vw, 3.8rem);
+  font-weight: 800;
+  line-height: 0.88;
+  font-variant-numeric: tabular-nums;
+  color: var(--pers-hot);
+  text-shadow:
+    0 2px 0 rgb(0 0 0 / 0.55),
+    0 0 1.8rem var(--pers-hot);
+}
+
+.pers__hype-count::before {
+  content: "×";
+  margin-right: 0.08em;
+  font-size: 0.55em;
+  opacity: 0.65;
+}
+
+.pers__hype-label {
+  font-size: var(--fs-micro, 0.7rem);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--pers-dim);
+  text-shadow: var(--pers-ink-shadow);
+}
+
+/* The counter heats up as the rally grows: cyan, violet, then magenta. */
+.pers__hype[data-tier="2"],
+.pers__hype[data-tier="3"] {
+  --pers-hot: var(--pers-accent);
+}
+
+.pers__hype[data-tier="4"],
+.pers__hype[data-tier="5"],
+.pers__hype[data-tier="6"],
+.pers__hype[data-tier="7"] {
+  --pers-hot: var(--pers-far);
+}
+
+.pers__hype[data-tier="4"] .pers__hype-label,
+.pers__hype[data-tier="5"] .pers__hype-label,
+.pers__hype[data-tier="6"] .pers__hype-label,
+.pers__hype[data-tier="7"] .pers__hype-label {
+  color: var(--pers-hot);
+}
+
+/* -------------------------------------------------------------- Medals -- */
+
+.pers__medal {
+  --pers-medal: var(--pers-near);
+  --pers-medal-glow: rgb(34 211 238 / 0.35);
+  --pers-tilt: -0.9deg;
+
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 0.75rem);
+  padding: var(--sp-2, 0.5rem) var(--sp-5, 1.5rem) var(--sp-2, 0.5rem) var(--sp-2, 0.5rem);
+  border: 2px solid var(--pers-medal);
+  border-radius: 999px;
+  background: linear-gradient(120deg, var(--pers-skin) 55%, rgb(255 255 255 / 0.06));
+  box-shadow:
+    0 0.8rem 2rem rgb(0 0 0 / 0.55),
+    0 0 1.6rem var(--pers-medal-glow);
+  transform: rotate(var(--pers-tilt));
+  will-change: transform, opacity;
+}
+
+.pers__medal-glyph {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 50%;
+  background: var(--pers-medal);
+  color: #04050c;
+  font-size: 1.15rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.pers__medal-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.pers__medal-label {
+  font-size: clamp(0.85rem, 0.78rem + 0.3vw, 1.05rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--pers-ink);
+  text-shadow: var(--pers-ink-shadow);
+}
+
+.pers__medal-note {
+  font-size: var(--fs-micro, 0.72rem);
+  color: var(--pers-dim);
+}
+
+.pers__medal[data-medal="rally-15"],
+.pers__medal[data-medal="supersonic"] {
+  --pers-medal: var(--pers-accent);
+  --pers-medal-glow: rgb(168 85 247 / 0.4);
+}
+
+.pers__medal[data-medal="shutout"],
+.pers__medal[data-medal="comeback"],
+.pers__medal[data-medal="match-point-saved"] {
+  --pers-medal: var(--c-focus, #fde047);
+  --pers-medal-glow: rgb(253 224 71 / 0.35);
+}
+
+/* ---------------------------------------------------------- Animations -- */
+
+.is-in-a {
+  animation: pers-in-a 420ms cubic-bezier(0.18, 1.5, 0.42, 1) both;
+}
+
+.is-in-b {
+  animation: pers-in-b 420ms cubic-bezier(0.18, 1.5, 0.42, 1) both;
+}
+
+.is-out-a {
+  animation: pers-out-a 240ms cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+
+.is-out-b {
+  animation: pers-out-b 240ms cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+
+.is-beat-a {
+  animation: pers-beat-a 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-beat-b {
+  animation: pers-beat-b 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pers-in-a {
+  0% {
+    opacity: 0;
+    transform: translateY(0.85rem) scale(0.7) rotate(calc(var(--pers-tilt) * 3));
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-0.14rem) scale(1.07) rotate(calc(var(--pers-tilt) * 1.7));
+  }
+  78% {
+    transform: translateY(0.04rem) scale(0.975) rotate(var(--pers-tilt));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(var(--pers-tilt));
+  }
+}
+
+@keyframes pers-in-b {
+  0% {
+    opacity: 0;
+    transform: translateY(0.85rem) scale(0.7) rotate(calc(var(--pers-tilt) * 3));
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-0.14rem) scale(1.07) rotate(calc(var(--pers-tilt) * 1.7));
+  }
+  78% {
+    transform: translateY(0.04rem) scale(0.975) rotate(var(--pers-tilt));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(var(--pers-tilt));
+  }
+}
+
+@keyframes pers-out-a {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(var(--pers-tilt));
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.88) rotate(var(--pers-tilt));
+  }
+}
+
+@keyframes pers-out-b {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(var(--pers-tilt));
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.88) rotate(var(--pers-tilt));
+  }
+}
+
+@keyframes pers-beat-a {
+  0% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes pers-beat-b {
+  0% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ------------------------------------------------------- Adaptations -- */
+
+/* On a phone the HUD stacks its chips on top, so the side furniture moves down
+   and the announcer sits closer to the bottom edge. */
+@media (max-width: 30rem) {
+  .pers__slot--taunt {
+    top: clamp(8rem, 30vh, 14rem);
+    max-width: min(17rem, 62vw);
+  }
+
+  .pers__hype {
+    top: clamp(8.5rem, 32vh, 15rem);
+  }
+
+  .pers__stack {
+    bottom: clamp(4rem, 12vh, 7rem);
+    width: min(28rem, 94vw);
+  }
+
+  .pers__medal-note {
+    display: none;
+  }
+}
+
+/* Landscape phones have no vertical room for a tall stack of furniture. */
+@media (max-height: 34rem) {
+  .pers__slot--taunt,
+  .pers__hype {
+    top: clamp(4rem, 26vh, 8rem);
+  }
+
+  .pers__stack {
+    bottom: var(--sp-3, 0.75rem);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .pers {
+    --pers-skin: #05070f;
+    --pers-edge: #dbe6fb;
+    --pers-halo: transparent;
+    --pers-dim: #d5deef;
+    --pers-ink-shadow: none;
+  }
+
+  .pers__bubble,
+  .pers__medal {
+    box-shadow: none;
+  }
+
+  .pers__hype-count {
+    text-shadow: none;
+  }
+
+  .pers__slot--taunt .pers__bubble,
+  .pers__slot--taunt .pers__bubble::after {
+    border-color: var(--pers-edge);
+  }
+}
+
+/*
+ * Reduced motion: same choreography, no bounce. Redeclaring the keyframes keeps
+ * every timing constant in the module valid — only the movement disappears.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .pers__slot,
+  .pers__hype,
+  .pers__medal {
+    will-change: auto;
+  }
+
+  @keyframes pers-in-a {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes pers-in-b {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes pers-out-a {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes pers-out-b {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes pers-beat-a {
+    from {
+      opacity: 0.85;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes pers-beat-b {
+    from {
+      opacity: 0.85;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .is-in-a,
+  .is-in-b {
+    animation-duration: 200ms;
+    animation-timing-function: linear;
+  }
+
+  .is-beat-a,
+  .is-beat-b {
+    animation-duration: 120ms;
+  }
+}
