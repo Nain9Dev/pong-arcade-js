@@ -1,0 +1,6 @@
+# Keep the deployed bundle byte-stable across platforms so each build does not
+# produce a line-ending-only diff.
+* text=auto eol=lf
+assets/** -text
+*.png binary
+*.jpg binary
