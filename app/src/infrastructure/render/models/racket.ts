@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import type { Side } from '../../../domain/arena';
 import { sideSign } from '../../../domain/arena';
@@ -7,6 +6,7 @@ import type { MatchRules } from '../../../domain/rules';
 import type { QualityLevel } from '../../../application/ports';
 import { SIDE_THEME } from '../palette';
 import type { FrameContext, SceneModule } from './contract';
+import { mergeAndDispose } from './merge';
 
 /**
  * The racket each side swings — and the visual body of the paddle hitbox.
@@ -294,8 +294,7 @@ class Racket implements RacketModule {
       buildThroatArm(-shoulderX, shoulderY, converge, tube * 0.62),
       buildGrip(gripLength, gripRadius, rake, converge),
     ];
-    const hardwareGeometry = mergeGeometries(hardwareParts);
-    for (const part of hardwareParts) part.dispose();
+    const hardwareGeometry = mergeAndDispose(hardwareParts);
     this.disposables.push(hardwareGeometry);
     this.head.add(new THREE.Mesh(hardwareGeometry, hardwareMaterial));
 
@@ -607,8 +606,7 @@ const buildStringBed = (
   for (const strand of main) sparseIndices += indexCount(strand);
 
   const all = main.concat(extra);
-  const geometry = mergeGeometries(all);
-  for (const strand of all) strand.dispose();
+  const geometry = mergeAndDispose(all);
   return { geometry, sparseIndices };
 };
 
@@ -662,10 +660,7 @@ const buildStrap = (gripRadius: number): THREE.BufferGeometry => {
   const bead = new THREE.SphereGeometry(gripRadius * 0.42, 7, 5);
   bead.translate(0, -gripRadius * 0.12, 0);
 
-  const merged = mergeGeometries([loop, bead]);
-  loop.dispose();
-  bead.dispose();
-  return merged;
+  return mergeAndDispose([loop, bead]);
 };
 
 // ---------------------------------------------------------------------------

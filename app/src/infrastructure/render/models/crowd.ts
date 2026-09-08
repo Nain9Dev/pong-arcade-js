@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import type { Arena } from '../../../domain/arena';
 import { goalPlaneZ } from '../../../domain/arena';
@@ -8,6 +7,7 @@ import { createRng } from '../../../domain/rng';
 import type { QualityLevel } from '../../../application/ports';
 import { SIDE_THEME } from '../palette';
 import type { FrameContext, ReactiveModule } from './contract';
+import { mergeAndDispose } from './merge';
 
 /**
  * The crowd: tiered terraces down both long sides of the arena, packed with a
@@ -293,8 +293,7 @@ const buildSpectatorGeometry = (): THREE.BufferGeometry => {
     parts.push(flag);
   }
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
+  const merged = mergeAndDispose(parts);
 
   // The crowd material is unlit and untextured, so both attributes are dead
   // weight in the vertex stream once the shading has been baked.
@@ -365,8 +364,7 @@ const buildStandsGeometry = (terrace: Terrace, arena: Arena): THREE.BufferGeomet
     parts.push(wall);
   }
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
+  const merged = mergeAndDispose(parts);
   merged.deleteAttribute('normal');
   merged.deleteAttribute('uv');
   return merged;
@@ -393,8 +391,7 @@ const buildRailGeometry = (terrace: Terrace, half: -1 | 1): THREE.BufferGeometry
     }
   }
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
+  const merged = mergeAndDispose(parts);
   merged.deleteAttribute('uv');
   merged.deleteAttribute('normal');
   return merged;

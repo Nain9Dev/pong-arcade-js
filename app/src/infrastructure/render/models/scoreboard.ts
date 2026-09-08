@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import type { Arena, Side } from '../../../domain/arena';
 import type { MatchRules } from '../../../domain/rules';
 import type { QualityLevel } from '../../../application/ports';
 import { SIDE_THEME } from '../palette';
+import { mergeAndDispose } from './merge';
 
 /**
  * The arena's signage kit and the jumbotron that hangs over the court.
@@ -54,17 +54,6 @@ export const orientedBox = (
   if (rz !== 0) geometry.rotateZ(rz);
   geometry.translate(x, y, z);
   return geometry;
-};
-
-/**
- * Merges the parts, disposes the sources and returns the single geometry.
- * Every structural part in the stadium is assembled this way so that a rib, a
- * truss module or a goal frame costs exactly one draw call.
- */
-export const mergeAndDispose = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry => {
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
-  return merged;
 };
 
 /**
