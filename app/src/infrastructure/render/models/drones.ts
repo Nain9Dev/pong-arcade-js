@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import type { Arena } from '../../../domain/arena';
 import { createRng } from '../../../domain/rng';
 import type { QualityLevel } from '../../../application/ports';
 import { createRadialGlowTexture } from '../textures';
 import type { FrameContext, SceneModule } from './contract';
+import { mergeAndDispose } from './merge';
 
 /**
  * The broadcast drones: two or three little quadcopters filming the match from
@@ -125,8 +125,7 @@ const buildHullGeometry = (): THREE.BufferGeometry => {
     parts.push(leg);
   }
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
+  const merged = mergeAndDispose(parts);
   merged.deleteAttribute('uv');
   return merged;
 };
@@ -149,8 +148,7 @@ const buildGimbalGeometry = (): THREE.BufferGeometry => {
   barrel.rotateX(Math.PI / 2);
   parts.push(barrel);
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
+  const merged = mergeAndDispose(parts);
   merged.deleteAttribute('uv');
   return merged;
 };

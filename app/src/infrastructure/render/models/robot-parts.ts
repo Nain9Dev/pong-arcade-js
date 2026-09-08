@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import type { Side } from '../../../domain/arena';
 import type { MatchRules } from '../../../domain/rules';
 import { SIDE_THEME } from '../palette';
+import { mergeAndDispose as fuse } from './merge';
 
 /**
  * The workshop: every plate, lens and nozzle the two duelling robots are made of.
@@ -317,18 +317,6 @@ export const createRobotMaterials = (
 const slab = (w: number, h: number, d: number, bevel: number, segments = 2): THREE.BufferGeometry => {
   const radius = Math.max(0.012, Math.min(bevel, w * 0.48, h * 0.48, d * 0.48));
   return new RoundedBoxGeometry(w, h, d, radius > 0.05 ? segments : 1, radius);
-};
-
-/**
- * Merges parts into one buffer and frees the sources.
- *
- * Every geometry produced in this file is an indexed primitive with
- * position/normal/uv, which is exactly what `mergeGeometries` requires.
- */
-const fuse = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry => {
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
-  return merged;
 };
 
 // ---------------------------------------------------------------------------
